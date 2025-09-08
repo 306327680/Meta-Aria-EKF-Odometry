@@ -133,6 +133,119 @@ The system generates comprehensive visualization:
 - **IMU Integration**: High-frequency prediction with bias compensation
 - **Sensor Rates**: Configurable update frequencies (GPS: 1/10 IMU rate, Magnetometer: 1/20 IMU rate)
 
+### Mathematical Formulation
+
+#### EKF State Vector
+```
+x = [px, py, pz, vx, vy, vz, roll, pitch, yaw]ᵀ
+```
+Where:
+- `px, py, pz`: Position in ENU coordinates (m)
+- `vx, vy, vz`: Velocity in ENU coordinates (m/s)
+- `roll, pitch, yaw`: Euler angles (rad)
+
+#### Prediction Step
+**State Prediction:**
+```
+x_{k|k-1} = f(x_{k-1|k-1}, u_k, Δt)
+```
+
+**Position Update:**
+```
+p_{k|k-1} = p_{k-1|k-1} + v_{k-1|k-1} * Δt + 0.5 * a_world * Δt²
+```
+
+**Velocity Update:**
+```
+v_{k|k-1} = v_{k-1|k-1} + a_world * Δt
+```
+
+**Attitude Update:**
+```
+θ_{k|k-1} = θ_{k-1|k-1} + (ω_corrected - b_gyro) * Δt
+```
+
+**Acceleration Transformation:**
+```
+a_world = R(θ) * R_imu_to_world * (a_imu - b_accel) - g
+```
+
+Where:
+- `R(θ)`: Rotation matrix from Euler angles
+- `R_imu_to_world`: IMU extrinsics calibration matrix
+- `g = [0, 0, -9.81]ᵀ`: Gravity vector in ENU
+- `b_gyro, b_accel`: Gyroscope and accelerometer biases
+
+#### Update Step (GPS)
+**Observation Model:**
+```
+z_gps = H * x + v_gps
+```
+
+**Position-only observation:**
+```
+H_pos = [I₃ₓ₃  0₃ₓ₃  0₃ₓ₃]  (3×9 matrix)
+```
+
+**Position + Velocity observation:**
+```
+H_pos_vel = [I₃ₓ₃  0₃ₓ₃  0₃ₓ₃]  (6×9 matrix)
+            [0₃ₓ₃  I₃ₓ₃  0₃ₓ₃]
+```
+
+**GPS Observation Covariance:**
+```
+R_gps = diag([σ²_h, σ²_h, σ²_v, σ²_vel, σ²_vel, σ²_vel])
+```
+Where:
+- `σ²_h`: Horizontal accuracy squared
+- `σ²_v`: Vertical accuracy squared (or 10×σ²_h if unavailable)
+- `σ²_vel`: Velocity accuracy squared
+
+#### Magnetometer Update
+**Magnetic Heading Observation:**
+```
+ψ_mag = atan2(m_y, m_x) + δ_mag
+```
+
+Where:
+- `m_x, m_y`: Magnetic field components in aligned frame
+- `δ_mag`: Magnetic declination correction
+
+**Observation Model:**
+```
+H_mag = [0  0  0  0  0  0  0  0  1]  (1×9 matrix)
+```
+
+#### Process Noise Model
+**Convergence Phase (first 10s):**
+```
+Q_convergence = diag([0.05, 0.05, 0.05, 0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
+```
+
+**Normal Operation:**
+```
+Q_normal = diag([0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.01, 0.01, 0.01])
+```
+
+#### Coordinate Transformations
+**GPS to Local ENU:**
+```
+[E]   [         0           ]   [Δλ * cos(φ₀) * R_earth]
+[N] = [         0           ] + [Δφ * R_earth           ]
+[U]   [h - h₀              ]   [         0              ]
+```
+
+Where:
+- `φ₀, λ₀, h₀`: Origin latitude, longitude, altitude
+- `Δφ, Δλ`: Latitude/longitude differences
+- `R_earth ≈ 6378137 m`: Earth radius
+
+**Gravity Model (WGS84):**
+```
+g(φ) = 9.780318 * (1 + 5.3024×10⁻³ * sin²(φ) - 5.8×10⁻⁶ * sin²(2φ))
+```
+
 ### Example Output
 
 After successful execution:
@@ -282,6 +395,119 @@ python main.py data.vrs --downsample 2 --out-prefix trajectory_analysis
 - **GPS集成**：位置和速度观测，自适应协方差
 - **IMU集成**：高频预测，带偏置补偿
 - **传感器频率**：可配置更新频率（GPS：1/10 IMU频率，磁力计：1/20 IMU频率）
+
+### 数学公式
+
+#### EKF状态向量
+```
+x = [px, py, pz, vx, vy, vz, roll, pitch, yaw]ᵀ
+```
+其中：
+- `px, py, pz`：ENU坐标系中的位置 (m)
+- `vx, vy, vz`：ENU坐标系中的速度 (m/s)
+- `roll, pitch, yaw`：欧拉角 (rad)
+
+#### 预测步骤
+**状态预测：**
+```
+x_{k|k-1} = f(x_{k-1|k-1}, u_k, Δt)
+```
+
+**位置更新：**
+```
+p_{k|k-1} = p_{k-1|k-1} + v_{k-1|k-1} * Δt + 0.5 * a_world * Δt²
+```
+
+**速度更新：**
+```
+v_{k|k-1} = v_{k-1|k-1} + a_world * Δt
+```
+
+**姿态更新：**
+```
+θ_{k|k-1} = θ_{k-1|k-1} + (ω_corrected - b_gyro) * Δt
+```
+
+**加速度坐标变换：**
+```
+a_world = R(θ) * R_imu_to_world * (a_imu - b_accel) - g
+```
+
+其中：
+- `R(θ)`：欧拉角转旋转矩阵
+- `R_imu_to_world`：IMU外参标定矩阵
+- `g = [0, 0, -9.81]ᵀ`：ENU坐标系重力向量
+- `b_gyro, b_accel`：陀螺仪和加速度计偏置
+
+#### 更新步骤（GPS）
+**观测模型：**
+```
+z_gps = H * x + v_gps
+```
+
+**仅位置观测：**
+```
+H_pos = [I₃ₓ₃  0₃ₓ₃  0₃ₓ₃]  (3×9 矩阵)
+```
+
+**位置+速度观测：**
+```
+H_pos_vel = [I₃ₓ₃  0₃ₓ₃  0₃ₓ₃]  (6×9 矩阵)
+            [0₃ₓ₃  I₃ₓ₃  0₃ₓ₃]
+```
+
+**GPS观测协方差：**
+```
+R_gps = diag([σ²_h, σ²_h, σ²_v, σ²_vel, σ²_vel, σ²_vel])
+```
+其中：
+- `σ²_h`：水平精度平方
+- `σ²_v`：垂直精度平方（如不可用则为10×σ²_h）
+- `σ²_vel`：速度精度平方
+
+#### 磁力计更新
+**磁航向观测：**
+```
+ψ_mag = atan2(m_y, m_x) + δ_mag
+```
+
+其中：
+- `m_x, m_y`：对齐坐标系中的磁场分量
+- `δ_mag`：磁偏角修正
+
+**观测模型：**
+```
+H_mag = [0  0  0  0  0  0  0  0  1]  (1×9 矩阵)
+```
+
+#### 过程噪声模型
+**收敛阶段（前10秒）：**
+```
+Q_convergence = diag([0.05, 0.05, 0.05, 0.5, 0.5, 0.5, 0.1, 0.1, 0.1])
+```
+
+**正常运行：**
+```
+Q_normal = diag([0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.01, 0.01, 0.01])
+```
+
+#### 坐标变换
+**GPS到局部ENU：**
+```
+[E]   [         0           ]   [Δλ * cos(φ₀) * R_earth]
+[N] = [         0           ] + [Δφ * R_earth           ]
+[U]   [h - h₀              ]   [         0              ]
+```
+
+其中：
+- `φ₀, λ₀, h₀`：原点纬度、经度、高度
+- `Δφ, Δλ`：纬度/经度差值
+- `R_earth ≈ 6378137 m`：地球半径
+
+**重力模型（WGS84）：**
+```
+g(φ) = 9.780318 * (1 + 5.3024×10⁻³ * sin²(φ) - 5.8×10⁻⁶ * sin²(2φ))
+```
 
 ### 示例输出
 
